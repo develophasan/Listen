@@ -1,0 +1,5 @@
+supabase
+aiortc
+pyaudio
+python-dotenv
+numpy
