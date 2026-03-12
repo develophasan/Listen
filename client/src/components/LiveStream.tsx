@@ -52,7 +52,7 @@ export const LiveStream: React.FC = () => {
                     console.error('Error adding ICE candidate', e);
                 }
             }
-        }).subscribe((status) => {
+        }).subscribe((status: string) => {
             console.log('Signaling channel status:', status);
         });
 
@@ -68,6 +68,12 @@ export const LiveStream: React.FC = () => {
             const stream = audioRef.current.srcObject as MediaStream;
             audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
             const source = audioContextRef.current.createMediaStreamSource(stream);
+            
+            // Ensure context is running (fixes mobile silence)
+            if (audioContextRef.current.state === 'suspended') {
+                audioContextRef.current.resume();
+            }
+
             const analyser = audioContextRef.current.createAnalyser();
             analyser.fftSize = 256;
             source.connect(analyser);
@@ -113,6 +119,14 @@ export const LiveStream: React.FC = () => {
                 pcRef.current = null;
             }
 
+            // Mobile Audio Autoplay Fix: Prime the audio element on user interaction
+            if (audioRef.current) {
+                audioRef.current.play().catch(() => {
+                    // This might fail because there's no source yet, which is fine.
+                    // The goal is to "unlock" the audio element.
+                });
+            }
+
             setStatus('connecting');
             const sessionId = Math.random().toString(36).substring(7);
             currentSessionIdRef.current = sessionId;
@@ -126,10 +140,18 @@ export const LiveStream: React.FC = () => {
                 if (audioRef.current && pcRef.current === pc) {
                     const stream = event.streams[0];
                     audioRef.current.srcObject = stream;
-                    audioRef.current.play();
+                    
+                    // Explicit play with user-interaction-unlocked element
+                    const playPromise = audioRef.current.play();
+                    if (playPromise !== undefined) {
+                        playPromise.catch((error: any) => {
+                            console.error("Audio play failed:", error);
+                        });
+                    }
+
                     setStatus('listening');
                     mediaRecorderRef.current = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-                    mediaRecorderRef.current.ondataavailable = (e) => e.data.size > 0 && recordedChunksRef.current.push(e.data);
+                    mediaRecorderRef.current.ondataavailable = (e: BlobEvent) => e.data.size > 0 && recordedChunksRef.current.push(e.data);
                     mediaRecorderRef.current.onstop = uploadRecording;
                 }
             };
