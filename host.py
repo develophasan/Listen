@@ -118,9 +118,13 @@ async def handle_signaling(message, channel):
             # The python SDK uses positional arguments: send_broadcast(event, payload)
             await channel.send_broadcast(
                 "webrtc-answer",
-                {'sdp': pc.localDescription.sdp, 'type': pc.localDescription.type}
+                {
+                    'sdp': pc.localDescription.sdp, 
+                    'type': pc.localDescription.type,
+                    'sessionId': payload.get('sessionId')
+                }
             )
-            logger.info("!!! Answer sent successfully !!!")
+            logger.info(f"!!! Answer sent successfully for session: {payload.get('sessionId')} !!!")
         
         elif event == 'ice-candidate':
             # Non-trickle doesn't strictly need these but we log them
