@@ -17,25 +17,41 @@ export const LiveStream: React.FC = () => {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const animationFrameRef = useRef<number | null>(null);
 
+    const signalingChannelRef = useRef<any>(null);
+
     // Signaling Listener
     useEffect(() => {
         const channel = supabase.channel('signaling');
+        signalingChannelRef.current = channel;
+
         channel.on('broadcast', { event: 'webrtc-answer' }, async ({ payload }: any) => {
-            if (pcRef.current) {
-                const answer = new RTCSessionDescription(payload);
-                await pcRef.current.setRemoteDescription(answer);
+            console.log('Received WebRTC Answer:', payload.type);
+            if (pcRef.current && pcRef.current.signalingState === 'have-local-offer') {
+                try {
+                    const answer = new RTCSessionDescription(payload);
+                    await pcRef.current.setRemoteDescription(answer);
+                } catch (err) {
+                    console.error('Error setting remote description:', err);
+                }
+            } else {
+                console.warn('Ignoring Answer: PC state is', pcRef.current?.signalingState);
             }
         }).on('broadcast', { event: 'ice-candidate' }, async ({ payload }: any) => {
-            if (pcRef.current && payload.candidate) {
+            if (pcRef.current && payload.candidate && pcRef.current.remoteDescription) {
                 try {
                     await pcRef.current.addIceCandidate(new RTCIceCandidate(payload));
                 } catch (e) {
                     console.error('Error adding ICE candidate', e);
                 }
             }
-        }).subscribe();
+        }).subscribe((status) => {
+            console.log('Signaling channel status:', status);
+        });
 
-        return () => { supabase.removeChannel(channel); };
+        return () => {
+            supabase.removeChannel(channel);
+            signalingChannelRef.current = null;
+        };
     }, []);
 
     // Waveform Visualization
@@ -102,12 +118,21 @@ export const LiveStream: React.FC = () => {
             await new Promise<void>(res => pc.iceGatheringState === 'complete' ? res() : pc.onicegatheringstatechange = () => pc.iceGatheringState === 'complete' && res());
 
             await supabase.from('commands').insert([{ command_type: 'start_listen', status: 'pending' }]);
-            await supabase.channel('signaling').send({
-                type: 'broadcast',
-                event: 'webrtc-offer',
-                payload: { sdp: pc.localDescription?.sdp, type: pc.localDescription?.type }
-            });
-        } catch (err) { setStatus('idle'); }
+
+            if (signalingChannelRef.current) {
+                console.log('Sending WebRTC Offer...');
+                await signalingChannelRef.current.send({
+                    type: 'broadcast',
+                    event: 'webrtc-offer',
+                    payload: { sdp: pc.localDescription?.sdp, type: pc.localDescription?.type }
+                });
+            } else {
+                console.error('Signaling channel is not initialized');
+            }
+        } catch (err) {
+            console.error('Start streaming error:', err);
+            setStatus('idle');
+        }
     };
 
     const stopStreaming = async () => {
