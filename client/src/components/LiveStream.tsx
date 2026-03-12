@@ -106,7 +106,9 @@ export const LiveStream: React.FC = () => {
         }
         return () => {
             if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
-            audioContextRef.current?.close();
+            if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+                audioContextRef.current.close().catch(console.error);
+            }
         };
     }, [status]);
 
