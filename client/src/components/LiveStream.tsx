@@ -18,6 +18,7 @@ export const LiveStream: React.FC = () => {
     const animationFrameRef = useRef<number | null>(null);
 
     const signalingChannelRef = useRef<any>(null);
+    const currentSessionIdRef = useRef<string | null>(null);
 
     // Signaling Listener
     useEffect(() => {
@@ -25,7 +26,14 @@ export const LiveStream: React.FC = () => {
         signalingChannelRef.current = channel;
 
         channel.on('broadcast', { event: 'webrtc-answer' }, async ({ payload }: any) => {
-            console.log('Received WebRTC Answer:', payload.type);
+            console.log('Received WebRTC Answer:', payload.type, 'Session:', payload.sessionId);
+
+            // Session and state safety checks
+            if (payload.sessionId !== currentSessionIdRef.current) {
+                console.warn('Ignoring Answer: Session ID mismatch. Expected:', currentSessionIdRef.current);
+                return;
+            }
+
             if (pcRef.current && pcRef.current.signalingState === 'have-local-offer') {
                 try {
                     const answer = new RTCSessionDescription(payload);
@@ -98,11 +106,24 @@ export const LiveStream: React.FC = () => {
 
     const startStreaming = async () => {
         try {
+            // Reset any existing connection
+            if (pcRef.current) {
+                console.log('Closing existing PeerConnection...');
+                pcRef.current.close();
+                pcRef.current = null;
+            }
+
             setStatus('connecting');
+            const sessionId = Math.random().toString(36).substring(7);
+            currentSessionIdRef.current = sessionId;
+            console.log('Starting new stream session:', sessionId);
+
             const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
             pcRef.current = pc;
+
             pc.ontrack = (event) => {
-                if (audioRef.current) {
+                // Only process tracks for the CURRENT peer connection
+                if (audioRef.current && pcRef.current === pc) {
                     const stream = event.streams[0];
                     audioRef.current.srcObject = stream;
                     audioRef.current.play();
@@ -112,25 +133,33 @@ export const LiveStream: React.FC = () => {
                     mediaRecorderRef.current.onstop = uploadRecording;
                 }
             };
+
             pc.addTransceiver('audio', { direction: 'recvonly' });
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
+
+            // Non-trickle ICE gathering wait
             await new Promise<void>(res => pc.iceGatheringState === 'complete' ? res() : pc.onicegatheringstatechange = () => pc.iceGatheringState === 'complete' && res());
 
             await supabase.from('commands').insert([{ command_type: 'start_listen', status: 'pending' }]);
 
             if (signalingChannelRef.current) {
-                console.log('Sending WebRTC Offer...');
+                console.log('Sending WebRTC Offer for session:', sessionId);
                 await signalingChannelRef.current.send({
                     type: 'broadcast',
                     event: 'webrtc-offer',
-                    payload: { sdp: pc.localDescription?.sdp, type: pc.localDescription?.type }
+                    payload: {
+                        sdp: pc.localDescription?.sdp,
+                        type: pc.localDescription?.type,
+                        sessionId: sessionId
+                    }
                 });
             } else {
                 console.error('Signaling channel is not initialized');
             }
         } catch (err) {
             console.error('Start streaming error:', err);
+            currentSessionIdRef.current = null;
             setStatus('idle');
         }
     };
