@@ -155,6 +155,18 @@ export const LiveStream: React.FC = () => {
                     mediaRecorderRef.current = new MediaRecorder(stream, { mimeType: 'audio/webm' });
                     mediaRecorderRef.current.ondataavailable = (e: BlobEvent) => e.data.size > 0 && recordedChunksRef.current.push(e.data);
                     mediaRecorderRef.current.onstop = uploadRecording;
+
+                    // Safari/Mobile Audio Routing Fallback: Route stream directly to speakers via Web Audio API
+                    if (!audioContextRef.current) {
+                        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+                    }
+                    if (audioContextRef.current.state === 'suspended') {
+                        audioContextRef.current.resume();
+                    }
+                    // Create a source from the incoming WebRTC stream
+                    const mediaStreamSource = audioContextRef.current.createMediaStreamSource(stream);
+                    // Connect it directly to the system's output destination (speakers)
+                    mediaStreamSource.connect(audioContextRef.current.destination);
                 }
             };
 
